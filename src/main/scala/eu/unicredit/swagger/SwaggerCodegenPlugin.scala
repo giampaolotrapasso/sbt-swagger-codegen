@@ -198,6 +198,18 @@ object SwaggerCodegenPlugin extends AutoPlugin {
   def swaggerCodeGenImpl(base: String, codegenPackage: String, sourcesDir: String, fileSplittingMode: String, generatePlayJson: Boolean, targetDir: String) = {
     val sDir = new File(sourcesDir)
 
+    val typeAlias =
+      if (sDir.exists() && sDir.isDirectory) {
+        (for {
+          file <- sDir.listFiles()
+          fName = file.getName
+          fPath = file.getAbsolutePath
+          if fName.endsWith(".json") || fName.endsWith(".yaml")
+        } yield {
+            fName -> CodeGen.generateTypeAliases(fPath)
+          }).toMap
+      } else Map()
+
     val models: Map[String, Iterable[(String, String)]] =
       if (sDir.exists() && sDir.isDirectory) {
         (for {
@@ -228,11 +240,20 @@ object SwaggerCodegenPlugin extends AutoPlugin {
     def getFileName(s: String) =
       new String(s.toCharArray.toList.takeWhile(_ == '.').toArray)
 
+    val aliasList = typeAlias.values.flatten.toList
+
+    if (aliasList.size > 0) {
+      val aliasesPackageCode = CodeGen.generateAliasesPackage(codegenPackage, aliasList)
+      FileWriter.writeToFile(new File(destDir, "Aliases.scala"), aliasesPackageCode)
+    }
+
+    val pi = if (aliasList.size > 0) Some("aliases") else None
+
     import FileSplittingModes._
     FileSplittingModes(fileSplittingMode) match {
       case SingleFile =>
         val code =
-          CodeGen.generateModelInit(codegenPackage) +
+          CodeGen.generateModelInit(codegenPackage, pi) +
             models.values.flatten.map(_._2).toList.distinct.mkString("\n", "\n\n", "\n")
 
         FileWriter.writeToFile(new File(destDir, "Model.scala"), code)
@@ -240,7 +261,7 @@ object SwaggerCodegenPlugin extends AutoPlugin {
         models.map {
           case (k, m) =>
             k ->
-              (CodeGen.generateModelInit(codegenPackage) +
+              (CodeGen.generateModelInit(codegenPackage, pi) +
                 m.map(_._2).toList.distinct.mkString("\n", "\n\n", "\n"))
         }.foreach {
           case (k, code) =>
@@ -250,7 +271,7 @@ object SwaggerCodegenPlugin extends AutoPlugin {
         models.values.flatten.foreach {
           case (k, v) =>
             val code =
-              CodeGen.generateModelInit(codegenPackage) + "\n" + v
+              CodeGen.generateModelInit(codegenPackage, pi) + "\n" + v
             FileWriter.writeToFile(new File(destDir, s"${getFileName(k)}.scala"), code)
         }
     }

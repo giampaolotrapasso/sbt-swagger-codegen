@@ -14,6 +14,8 @@
 */
 package eu.unicredit.swagger
 
+import java.util
+
 import treehugger.forest._
 import definitions._
 import treehuggerDSL._
@@ -29,6 +31,8 @@ import java.io.File.separatorChar
 
 object CodeGen extends SwaggerToTree with StringUtils {
 
+  val swaggerBasicTypes = Set("string", "integer", "number", "boolean")
+
   def generateClass(name: String, props: Iterable[(String, Property)], comments: Option[String]): String = {
     val GenClass = RootClass.newClass(name)
 
@@ -42,12 +46,71 @@ object CodeGen extends SwaggerToTree with StringUtils {
     treeToString(resTree)
   }
 
-  def generateModelInit(packageName: String): String = {
+  def generateTypeAlias(name: String, reference: String, comments: Option[String]): Tree = {
+    val GenClass = RootClass.newClass(name)
+
+    val aliasType = SwaggerBasicType(reference) match {
+      case string => StringClass
+      case integer => IntClass
+      case number => DoubleClass
+      case boolean => BooleanClass
+    }
+
+    val tree: Tree =  TYPEVAR(name) := REF(aliasType)
+
+    val resTree: Tree =
+      comments.map(tree withComment _).getOrElse(tree)
+
+    resTree
+  }
+
+
+  def generateModelInit(packageName: String, aliasPackage: Option[String]): String = {
+
+    var imports = Seq(IMPORT("org.joda.time", "DateTime"))
+
+    imports = aliasPackage match {
+      case Some(x) => imports :+ IMPORT(x, "_")
+      case None => imports
+    }
+
     val initTree =
-      IMPORT("org.joda.time", "DateTime") inPackage packageName
+      BLOCK {
+      imports
+    } inPackage packageName
 
     treeToString(initTree) + "\n"
   }
+
+  def generateTypeAliases(fileName: String): Seq[Tree] = {
+    val swagger = new SwaggerParser().read(fileName)
+    val models = swagger.getDefinitions
+
+    val aliasesDefinitions = models.filter(_._2.isInstanceOf[ModelImpl])
+
+    val modelTrees : Seq[Tree]=
+      for {
+        (name: String, model: Model) <- aliasesDefinitions
+        modelImpl = model.asInstanceOf[ModelImpl]
+        description = model.getDescription if swaggerBasicTypes.contains(modelImpl.getType())
+      } yield generateTypeAlias(name, modelImpl.getType(), Option(description))
+
+    modelTrees
+
+  }
+
+  def generateAliasesPackage(packageName: String, aliases: Seq[Tree]): String = {
+    val res: Tree =
+      BLOCK(
+        PACKAGEOBJECTDEF("aliases") := BLOCK(
+          aliases
+        )
+      ) inPackage packageName
+
+    treeToString(res)
+  }
+
+
 
   def generateModels(fileName: String): Iterable[(String, String)] = {
     val swagger = new SwaggerParser().read(fileName)
@@ -668,4 +731,22 @@ trait StringUtils {
   def trimTo(n: Int, s: String): String =
     new String(empty(n).zipAll(s, ' ', ' ').map(_._2).toArray)
 
+}
+
+object SwaggerBasicType {
+  case object string
+  case object number
+  case object integer
+  case object boolean
+
+  def apply(s: String) =
+    s match {
+      case "string" => string
+      case "number" => number
+      case "integer" => integer
+      case "boolean" => boolean
+
+      case any =>
+        throw new Exception(s"Unsupported SwaggerBasicTypes option $any please choose one of (string | number | boolean | integer)")
+    }
 }
