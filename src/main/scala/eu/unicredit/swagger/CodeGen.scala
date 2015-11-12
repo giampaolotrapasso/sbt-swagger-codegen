@@ -460,6 +460,11 @@ trait SwaggerToTree {
               REF("getJsonBody") APPLY REF("request")) DOT "get"
 
           Some(bp.getName -> tree)
+        } else {
+          val paramType = bp.getSchema.getProperties
+          val tree: ValDef = VAL(bp.getName) := REF("Json")
+          Some(bp.getName -> tree)
+        }
       case _ =>
         None
     }.toMap
