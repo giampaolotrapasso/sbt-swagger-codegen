@@ -57,7 +57,7 @@ object CodeGen extends SwaggerToTree with StringUtils {
       for {
         (name, model) <- models
         description = model.getDescription
-        properties = model.getProperties
+        properties = model.getProperties if properties != null
       } yield name -> generateClass(name, properties, Option(description))
 
     modelTrees
@@ -118,7 +118,7 @@ object CodeGen extends SwaggerToTree with StringUtils {
 
         val formats =
           for {
-            (name, model) <- models
+            (name, model) <- models if model.getProperties != null
             (c, m) <- Seq(("Reads", "read"), ("Writes", "write"))
           } yield VAL(s"$name$c", s"$c[$name]") withFlags (Flags.IMPLICIT, Flags.LAZY) := (
             if (model.getProperties.size > 22)
@@ -452,11 +452,14 @@ trait SwaggerToTree {
         //for sure it is not enough ...
         val paramType = bp.getSchema.getReference
 
-        val tree: ValDef = VAL(bp.getName) :=
-          REF("Json") DOT "fromJson" APPLYTYPE bp.getSchema.getReference APPLY (
-            REF("getJsonBody") APPLY REF("request")) DOT "get"
+        if (paramType != null) {
+          val modelName = bp.getSchema.getReference.split("/").toList.last
 
-        Some(bp.getName -> tree)
+          val tree: ValDef = VAL(bp.getName) :=
+            REF("Json") DOT "fromJson" APPLYTYPE modelName APPLY (
+              REF("getJsonBody") APPLY REF("request")) DOT "get"
+
+          Some(bp.getName -> tree)
       case _ =>
         None
     }.toMap
