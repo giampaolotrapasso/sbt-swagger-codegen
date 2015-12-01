@@ -29,9 +29,13 @@ import scala.collection.JavaConversions._
 import java.io.File.separator
 import java.io.File.separatorChar
 
+import scala.collection.mutable
+
 object CodeGen extends SwaggerToTree with StringUtils {
 
   val swaggerBasicTypes = Set("string", "integer", "number", "boolean")
+
+  var aliasMap = Map[String, String]()
 
   def generateClass(name: String, props: Iterable[(String, Property)], comments: Option[String]): String = {
     val GenClass = RootClass.newClass(name)
@@ -50,10 +54,10 @@ object CodeGen extends SwaggerToTree with StringUtils {
     val GenClass = RootClass.newClass(name)
 
     val aliasType = SwaggerBasicType(reference) match {
-      case string => StringClass
-      case integer => IntClass
-      case number => DoubleClass
-      case boolean => BooleanClass
+      case obj @ SwaggerBasicType.string => StringClass
+      case obj @ SwaggerBasicType.integer => IntClass
+      case obj @ SwaggerBasicType.number => DoubleClass
+      case obj @ SwaggerBasicType.boolean => BooleanClass
     }
 
     val tree: Tree =  TYPEVAR(name) := REF(aliasType)
@@ -83,12 +87,20 @@ object CodeGen extends SwaggerToTree with StringUtils {
   }
 
   def generateTypeAliases(fileName: String): Seq[Tree] = {
+
     val swagger = new SwaggerParser().read(fileName)
-    val models = swagger.getDefinitions
+    val models: util.Map[Position, Model] = swagger.getDefinitions
+
 
     val aliasesDefinitions = models.filter(_._2.isInstanceOf[ModelImpl])
+      .map(x => (x._1, x._2.asInstanceOf[ModelImpl]))
+      .filter(x => swaggerBasicTypes.contains(x._2.getType()))
+      .toList
+      .sortBy(x => x._1)
 
-    val modelTrees : Seq[Tree]=
+
+
+    val modelTrees =
       for {
         (name: String, model: Model) <- aliasesDefinitions
         modelImpl = model.asInstanceOf[ModelImpl]
@@ -100,6 +112,7 @@ object CodeGen extends SwaggerToTree with StringUtils {
   }
 
   def generateAliasesPackage(packageName: String, aliases: Seq[Tree]): String = {
+
     val res: Tree =
       BLOCK(
         PACKAGEOBJECTDEF("aliases") := BLOCK(
@@ -126,12 +139,23 @@ object CodeGen extends SwaggerToTree with StringUtils {
     modelTrees
   }
 
-  def generateJsonInit(packageName: String): String = {
+  def generateJsonInit(packageName: String, aliasPackage: Option[String]): String = {
+
+
+    var imports = Seq(
+      IMPORT("play.api.libs.json", "_"),
+      IMPORT("play.api.libs.functional.syntax", "_")
+    )
+
+    imports = aliasPackage match {
+      case Some(x) => imports :+ IMPORT(x, "_")
+      case None => imports
+    }
+
+
     val initTree =
       BLOCK {
-        Seq(
-          IMPORT("play.api.libs.json", "_"),
-          IMPORT("play.api.libs.functional.syntax", "_"))
+        imports
       } inPackage packageName
 
     treeToString(initTree)
@@ -215,7 +239,7 @@ object CodeGen extends SwaggerToTree with StringUtils {
           Option(path.getPut) map ("PUT" -> _)).flatten.toMap
 
       val controllerName =
-        packageName + ".controller" + "." + controllerNameFromFileName(fileName)
+        packageName  + "." + controllerNameFromFileName(fileName)
 
       (for {
         op <- ops
@@ -240,8 +264,7 @@ object CodeGen extends SwaggerToTree with StringUtils {
   def generatePlayServerStub(fileName: String, packageName: String, codeProvidedPackage: String, async: Boolean): (String, String) = {
     val swagger = new SwaggerParser().read(fileName)
 
-    val controllerPackageName =
-      packageName + ".controller"
+    val controllerPackageName = packageName
 
     val controllerName =
       controllerNameFromFileName(fileName)
